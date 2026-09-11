@@ -1,0 +1,15 @@
+# Exclude the raw data samples specifically
+data sample/*.dat
+
+# General safety net for any other large files anywhere
+*.dat
+*.npz
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
