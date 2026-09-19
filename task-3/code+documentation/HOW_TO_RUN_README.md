@@ -46,7 +46,7 @@ Adds a faint background noise floor across the whole stream so "easy" vs.
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--insert-prob` | 0.5 | fraction of silent gaps that get a synthetic packet (keep <1.0 — you need "absent" examples too, per plan item 10) |
+| `--insert-prob` | 0.4 | fraction of silent gaps that get a synthetic packet (matches PROTOCOL_SPEC.md; keep <1.0 — you need "absent" examples too, per plan item 10) |
 | `--snr-min` / `--snr-max` | -3 / 15 dB | SNR sweep for inserted packets (plan item 4: avoid making them "too clean") |
 | `--packet-min-ms` / `--packet-max-ms` | 0.2 / 1.0 | inter-drone packet duration range |
 | `--example-ms` | 5.0 | length of each cut-and-labeled training example |

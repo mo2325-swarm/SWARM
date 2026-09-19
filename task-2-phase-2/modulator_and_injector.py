@@ -91,23 +91,37 @@ def generate_realistic_protocol_packet(fs, sps, beta, py_rng, max_cfo_hz=500):
         
     return realistic_pulse, msg_type.value
 
-def local_noise_floor(iq, s, e):
+def noise_floor_power(combined_iq, noise_frac=0.05):
     """
-    Measures the background noise level right outside the gap.
-    We need this to know how loud to make our synthetic packet.
-    """
-    seg = iq[max(0, s - 2000):s] if s > 0 else iq[e:e + 2000]
-    if len(seg) == 0:
-        seg = iq[s:e]
-    return float(np.mean(np.abs(seg) ** 2)) + 1e-12
+    Return the power of the background noise floor we will add to the whole
+    stream. It is a fixed fraction of the *active* drone-signal power, so it is
+    one consistent reference value for the entire recording.
 
-def synthesize_and_insert(combined_iq, gap_list, fs, sps, beta, py_rng, insert_prob=0.5, snr_min=-3.0, snr_max=15.0):
+    This is the reference every packet's SNR is measured against, so the SNR we
+    log is the SNR the packet actually has against the noise we add -- not the
+    power of whatever happened to sit next to the gap (the old bug).
     """
-    Loops through every silent gap, decides whether to inject a message,
-    scales the volume (SNR), and adds ambient background noise.
+    active_p = float(np.mean(np.abs(combined_iq) ** 2)) + 1e-12
+    return active_p * noise_frac
+
+def synthesize_and_insert(combined_iq, gap_list, fs, sps, beta, py_rng,
+                          insert_prob=0.4, snr_min=-3.0, snr_max=15.0,
+                          add_noise_floor=True, noise_frac=0.05):
+    """
+    Loops through every silent gap, decides whether to inject a message, scales
+    it to a target SNR against the (single, consistent) noise floor, and finally
+    adds that noise floor across the whole stream.
+
+    insert_prob defaults to 0.4 to match PROTOCOL_SPEC.md.
+    add_noise_floor: set False if Member 3's pipeline adds its own noise floor,
+    so it is never applied twice.
     """
     iq = combined_iq.copy()
     insertions = []  # This is our Ground Truth log for Member 3
+
+    # One consistent noise-floor power for the whole recording -- this is the
+    # reference every packet's SNR is measured against.
+    floor_p = noise_floor_power(combined_iq, noise_frac)
 
     for gi, gap in enumerate(gap_list):
         s, e = int(gap["start_sample"]), int(gap["end_sample"])
@@ -115,9 +129,9 @@ def synthesize_and_insert(combined_iq, gap_list, fs, sps, beta, py_rng, insert_p
         margin = int(0.1e-3 * fs)  # Leave a 0.1ms buffer so we don't hit the real drone's signal
         usable = gap_len - 2 * margin
 
-        # 1. Decide if we inject here (e.g., 50% chance)
+        # 1. Decide if we inject here
         will_insert = py_rng.random() < insert_prob
-        
+
         record = {"gap_id": gi, "gap_start": s, "gap_end": e, "inserted": False}
 
         if will_insert:
@@ -131,12 +145,10 @@ def synthesize_and_insert(combined_iq, gap_list, fs, sps, beta, py_rng, insert_p
                 offset = s + margin + py_rng.integers(0, usable - plen + 1)
 
                 # 3. VARYING SIGNAL STRENGTHS (SNR)
-                # Pick a random SNR between -3dB (very faint) and 15dB (loud)
+                # Pick a random SNR, then scale the packet to that power RELATIVE
+                # TO THE NOISE FLOOR we will add -- so the logged SNR is real.
                 snr_db = py_rng.uniform(snr_min, snr_max)
-                
-                # Measure how loud the environment is right here, and scale our packet to match the SNR
-                noise_p = local_noise_floor(iq, s, e)
-                target_sig_p = noise_p * (10 ** (snr_db / 10))
+                target_sig_p = floor_p * (10 ** (snr_db / 10))
                 packet = packet * np.sqrt(target_sig_p)
 
                 # 4. Inject the packet into the main radio stream!
@@ -150,17 +162,15 @@ def synthesize_and_insert(combined_iq, gap_list, fs, sps, beta, py_rng, insert_p
                     "pkt_end": int(offset + plen),
                     "snr_db": float(snr_db)
                 })
-                
+
         insertions.append(record)
 
-    # 5. ADD BACKGROUND NOISE (Realism)
-    # Add a faint, gritty layer of white noise across the entire recording so it isn't "mathematically perfect"
-    sig_p = float(np.mean(np.abs(iq) ** 2))
-    floor_p = sig_p * 0.05  # The noise floor is 5% of the average signal power
-    
-    noise = (py_rng.standard_normal(len(iq)) + 1j * py_rng.standard_normal(len(iq))).astype(np.complex64)
-    noise *= np.sqrt(floor_p / 2)
-    iq = iq + noise
+    # 5. ADD THE BACKGROUND NOISE FLOOR (the same floor_p used as the SNR
+    # reference above), once, across the whole recording.
+    if add_noise_floor:
+        noise = (py_rng.standard_normal(len(iq)) + 1j * py_rng.standard_normal(len(iq))).astype(np.complex64)
+        noise *= np.sqrt(floor_p / 2)
+        iq = iq + noise
 
     return iq, insertions
 
