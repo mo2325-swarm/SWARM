@@ -34,11 +34,14 @@ PAYLOAD_SIZES = {
 }
 
 # Repeat counts per type, computed in PROTOCOL_SPEC.md against the pipeline's
-# real symbol rate (3 Msym/s) to land each message at ~0.20-0.21ms on air.
+# real symbol rate (3 Msym/s) to land each message at ~0.20-0.23ms on air.
+# NOTE: POSITION_REPORT uses 10 (not 9) repeats so that its on-air length is
+# unique. With 9 repeats its body was 136*9 = 1224 bits, identical to BEACON's
+# 72*17 = 1224, which made the two types impossible to tell apart on decode.
 REPEAT_COUNTS = {
     MsgType.BEACON: 17,
     MsgType.ACK: 21,
-    MsgType.POSITION_REPORT: 9,
+    MsgType.POSITION_REPORT: 10,
     MsgType.COLLISION_WARNING: 12,
     MsgType.TASK_ASSIGN: 6,
 }
@@ -110,6 +113,8 @@ class Message:
         """Unpack raw bytes (as produced by serialize()) back into a Message."""
         if len(data) < 5:
             raise ValueError("Data too short to be a valid message")
+        if data[0] >= len(_MSG_TYPE_LIST):
+            raise ValueError(f"Unknown message-type byte {data[0]}")
         msg_type = _MSG_TYPE_LIST[data[0]]
         src_id, dst_id, seq_no = data[1], data[2], data[3]
         payload = data[4:-1]
@@ -177,7 +182,7 @@ class Message:
 
             try:
                 return Message.deserialize(_bits_to_bytes(voted_bits))
-            except ValueError:
+            except (ValueError, IndexError):
                 continue  # length matched but content didn't check out; try next type
 
         raise ValueError("Could not decode on-air packet against any known message type")

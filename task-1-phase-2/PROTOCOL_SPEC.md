@@ -59,13 +59,17 @@ Computed against the pipeline's actual symbol rate (3 Msym/s = 20 samples/symbol
 |-------------------|---------|------------|---------------|--------------|------------------|
 | BEACON            | 4 B     | 9 B        | 36            | 17           | ~0.209 ms        |
 | ACK               | 2 B     | 7 B        | 28            | 21           | ~0.201 ms        |
-| POSITION_REPORT   | 12 B    | 17 B       | 68            | 9            | ~0.209 ms        |
+| POSITION_REPORT   | 12 B    | 17 B       | 68            | 10           | ~0.232 ms        |
 | COLLISION_WARNING | 8 B     | 13 B       | 52            | 12           | ~0.213 ms        |
 | TASK_ASSIGN       | 20 B    | 25 B       | 100           | 6            | ~0.205 ms        |
 
-All five types now land in a tight band (~0.20-0.21 ms) — comfortably inside the
+All five types land in a tight band (~0.20-0.23 ms) — comfortably inside the
 pipeline's validated [0.2, 1.0] ms envelope, near the short end, leaving headroom for
 longer variants (e.g. TASK_ASSIGN with a larger payload) without exceeding 1.0 ms.
+
+**Note:** POSITION_REPORT uses 10 repeats (not 9). With 9 repeats its on-air body was
+1224 bits — identical to BEACON's — so a decoder could not tell the two types apart by
+length. Ten repeats makes every message type's on-air length unique.
 
 ## Justification
 

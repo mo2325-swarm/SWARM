@@ -77,16 +77,22 @@ def make_qpsk_packet(duration_s, fs, sps, beta, rng):
 # ---------------------------------------------------------------------------
 # Steps 10-11 — insert into SOME gaps at a target SNR, optional noise floor
 # ---------------------------------------------------------------------------
-def local_noise_floor(iq, s, e):
-    seg = iq[max(0, s - 2000):s] if s > 0 else iq[e:e + 2000]
-    if len(seg) == 0:
-        seg = iq[s:e]
-    return float(np.mean(np.abs(seg) ** 2)) + 1e-12
+def noise_floor_power(combined_iq, noise_frac):
+    """Single, consistent noise-floor power for the whole stream: a fixed
+    fraction of the active signal power. Every packet's SNR is measured against
+    this same value (not the power that happens to sit next to a gap), so the
+    logged snr_db is the SNR the packet actually has against the added noise."""
+    active_p = float(np.mean(np.abs(combined_iq) ** 2)) + 1e-12
+    return active_p * noise_frac
 
 
 def synthesize_and_insert(combined_iq, gap_list, fs, cfg, rng):
     iq = combined_iq.copy()
     insertions = []  # ground truth log (step 10)
+
+    # One consistent noise-floor reference for SNR (added to the stream only in
+    # the "hard" variant, but always the reference the SNR label is measured to).
+    floor_p = noise_floor_power(combined_iq, cfg["hard_noise_frac"])
 
     for gi, gap in enumerate(gap_list):
         s, e = int(gap["start_sample"]), int(gap["end_sample"])
@@ -111,8 +117,7 @@ def synthesize_and_insert(combined_iq, gap_list, fs, cfg, rng):
             offset = s + margin + rng.integers(0, max(1, usable - plen + 1))
 
             snr_db = rng.uniform(cfg["snr_min_db"], cfg["snr_max_db"])
-            noise_p = local_noise_floor(iq, s, e)
-            target_sig_p = noise_p * (10 ** (snr_db / 10))
+            target_sig_p = floor_p * (10 ** (snr_db / 10))
             packet = packet * np.sqrt(target_sig_p)
 
             iq[offset:offset + plen] += packet.astype(np.complex64)
@@ -123,10 +128,9 @@ def synthesize_and_insert(combined_iq, gap_list, fs, cfg, rng):
                             "snr_db": float(snr_db)})
         insertions.append(record)
 
-    # Step 11 — optional realism: faint background noise floor (toggle)
+    # Step 11 — optional realism: faint background noise floor (toggle).
+    # Uses the same floor_p that the SNR labels above were measured against.
     if cfg["variant"] == "hard":
-        sig_p = float(np.mean(np.abs(iq) ** 2))
-        floor_p = sig_p * cfg["hard_noise_frac"]
         noise = (rng.standard_normal(len(iq)) + 1j * rng.standard_normal(len(iq))).astype(np.complex64)
         noise *= np.sqrt(floor_p / 2)
         iq = iq + noise
@@ -407,7 +411,7 @@ def main():
     ap.add_argument("--input", required=True, help="path to swarm_combined.npz")
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--insert-prob", type=float, default=0.5)
+    ap.add_argument("--insert-prob", type=float, default=0.4)  # matches PROTOCOL_SPEC.md
     ap.add_argument("--snr-min", type=float, default=-3.0)
     ap.add_argument("--snr-max", type=float, default=15.0)
     ap.add_argument("--packet-min-ms", type=float, default=0.2)
